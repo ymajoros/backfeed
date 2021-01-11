@@ -48,7 +48,9 @@ public class BackFeedService {
 
     private void handleNoiseDetected(float peak) {
         if (!noiseDetected) {
-            System.out.printf("Noise detected, level = %f; shutting down.\n", peak);
+            float rmsThreshold = noiseDetectionService.getRmsThreshold();
+            float factor = peak / rmsThreshold;
+            System.out.printf("Noise detected, level = %f > %f by a factor of %f; shutting down.\n", peak, rmsThreshold, factor);
         }
         this.noiseDetected = true;
     }
