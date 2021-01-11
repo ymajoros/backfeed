@@ -1,29 +1,37 @@
 package be.valuya.backfeed.service;
 
 import be.valuya.backfeed.domain.config.BackFeedConfig;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.TargetDataLine;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 @RequiredArgsConstructor
 public class NoiseDetectionService {
 
-    private static final float RMS_THRESHOLD = 0.005f;
     private static final int BUFFER_SIZE = 2048;
     public static final int RMS_DISPLAY_SCALE = 100;
 
-    private AudioService audioService = new AudioService();
+    private final AudioService audioService = new AudioService();
     private final BackFeedConfig backFeedConfig;
 
     // the line from which audio data is captured
     private TargetDataLine line;
     private volatile boolean finished;
-    private boolean noiseDetected;
+    private volatile boolean detectionStarted;
+    @Getter
+    private volatile boolean noiseDetected;
+    private List<NoiseListener> noiseListeners = new ArrayList<>();
+    private volatile float maxPeak;
+    @Getter
+    private float rmsThreshold = -1f;
 
 
     public void start() {
@@ -33,7 +41,6 @@ public class NoiseDetectionService {
             line = audioService.getTargetDataLine(info);
             line.open(format);
 
-            System.out.println("Start capturing...");
             line.start();
 
             int bytesPerSample = AudioService.SAMPLE_SIZE_IN_BITS / AudioService.CHANNEL_COUNT / 8;
@@ -43,7 +50,9 @@ public class NoiseDetectionService {
 
             finished = false;
             noiseDetected = false;
+            detectionStarted = false;
             line.start();
+                maxPeak = 0f;
             for (int b; !finished && (b = line.read(buffer, 0, BUFFER_SIZE)) > -1; ) {
 
                 // convert bytes to samples here
@@ -53,22 +62,22 @@ public class NoiseDetectionService {
                     samples[s++] = audioService.convertSampleBytesToFloat(b1, b2);
                 }
 
-                float rms = 0f;
+                float rmsSquareSum = 0f;
                 float peak = 0f;
                 for (float sample : samples) {
                     float abs = Math.abs(sample);
                     peak = Math.max(abs, peak);
-                    rms += sample * sample;
+                    maxPeak = Math.max(peak, maxPeak);
+                    rmsSquareSum += sample * sample;
                 }
 
-                rms = (float) Math.sqrt(rms / samples.length);
+                float rms = (float) Math.sqrt(rmsSquareSum / samples.length);
 
                 showRms(rms, peak);
 
-                if (rms > RMS_THRESHOLD) {
-                    if (!noiseDetected) {
-                        System.out.println("Noise detected!");
-                    }
+                if (detectionStarted && rms > rmsThreshold) {
+                    float finalPeak = peak;
+                    noiseListeners.forEach(noiseListener -> noiseListener.handleNoiseDetected(finalPeak));
                     noiseDetected = true;
                 }
             }
@@ -92,10 +101,7 @@ public class NoiseDetectionService {
     }
 
     private int scaleToDisplay(float rawValue) {
-        if (rawValue < 0.005) {
-            return 0;
-        }
-        return (int) (Math.sqrt(rawValue) * RMS_DISPLAY_SCALE);
+        return (int) (rawValue * RMS_DISPLAY_SCALE);
     }
 
     private String repeat(String str, int count) {
@@ -110,10 +116,18 @@ public class NoiseDetectionService {
     private void finish() {
         line.stop();
         line.close();
-        System.out.println("Finished");
     }
 
     public void stop() {
         finished = true;
+    }
+
+    public void startDetection() {
+        detectionStarted = true;
+        rmsThreshold = maxPeak;
+    }
+
+    public void addNoiseListener(NoiseListener noiseListener) {
+        noiseListeners.add(noiseListener);
     }
 }

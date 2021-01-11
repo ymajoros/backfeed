@@ -8,5 +8,8 @@ import lombok.Getter;
 public class BackFeedConfig {
 
     private int testToneFrequency;
-
+    @Builder.Default()
+    public int noiseProfileDurationMillis = 5_000;
+    @Builder.Default()
+    public int testToneDurationMillis = 60_000;
 }
